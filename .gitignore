@@ -3,3 +3,4 @@ env
 datasets/*
 preprocessed/
 __pycache__
+generated_samples/*
