@@ -286,14 +286,14 @@ def preprocess_segment(
     None
     """
     segment_id = generate_id(segment)
-    segment_filename = segment_id + ".wav"
+    segment_filename = segment_id + ".flac"
     segment_fullpath = os.path.join(clean_path, segment_filename)
     store_audio(segment, segment_fullpath, clean_samplerate)
     noisy_audios = add_all_noises(segment, noises_array)
     for index in range(noisy_audios.shape[0]):
         noisy_audio = noisy_audios[index]
         noisy_audio_id = noises_ids[index]
-        noisy_audio_filename = segment_id + "_" + noisy_audio_id + ".wav"
+        noisy_audio_filename = segment_id + "_" + noisy_audio_id + ".flac"
         noisy_audio_fullpath = os.path.join(noisy_path, noisy_audio_filename)
         store_audio(noisy_audio, noisy_audio_fullpath, clean_samplerate)
 
