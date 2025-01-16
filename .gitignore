@@ -1,6 +1,7 @@
 venv
 env
 datasets/*
+data/*
 preprocessed/
 __pycache__
 generated_samples/*
