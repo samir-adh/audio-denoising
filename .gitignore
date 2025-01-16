@@ -2,6 +2,7 @@ venv
 env
 datasets/*
 data/*
+models/*
 preprocessed/
 __pycache__
 generated_samples/*

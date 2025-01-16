@@ -1,16 +1,16 @@
 import os
 os.environ["SM_FRAMEWORK"] = "tf.keras"
 
-import os
 import numpy as np
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Conv2D, SpatialDropout2D, Dropout, UpSampling2D
-from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping, LearningRateScheduler
+from tensorflow.keras.layers import (Input, Conv2D, SpatialDropout2D, BatchNormalization, 
+                                      UpSampling2D, Dropout)
+from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
 from tensorflow.keras.optimizers import Adam
 import tensorflow as tf
 from skimage.transform import resize
-import matplotlib.pyplot as plt
 import librosa
+import matplotlib.pyplot as plt
 
 # Data Augmentation: Time and Frequency Masking (SpecAugment)
 def frequency_masking(spec, freq_width=20):
@@ -37,7 +37,7 @@ def augment_audio(audio, sr, pitch_shift=True, time_stretch=True):
 def load_and_preprocess_data(clean_dir, noisy_dir, resize_shape=(128, 32)):
     clean_files = sorted(os.listdir(clean_dir))
     noisy_files = sorted(os.listdir(noisy_dir))
-    
+
     if len(clean_files) != len(noisy_files):
         raise ValueError("Mismatch between clean and noisy files.")
 
@@ -70,16 +70,6 @@ def load_and_preprocess_data(clean_dir, noisy_dir, resize_shape=(128, 32)):
 
     return X_in, X_ou
 
-# Learning Rate Scheduler function
-def lr_schedule(epoch):
-    initial_lr = 1e-4
-    if epoch < 10:
-        return initial_lr
-    else:
-        return initial_lr * tf.math.exp(-0.1 * (epoch - 10))
-
-lr_scheduler = LearningRateScheduler(lr_schedule)
-
 # Training function
 def train_model(clean_dir, noisy_dir, val_clean_dir, val_noisy_dir, weights_path, epochs, batch_size):
     # Load data
@@ -94,26 +84,30 @@ def train_model(clean_dir, noisy_dir, val_clean_dir, val_noisy_dir, weights_path
     )
 
     inp = Input(shape=(128, 32, 1))
-    l1 = Conv2D(3, (1, 1))(inp)  
+    l1 = Conv2D(3, (1, 1))(inp)  # Convert single channel to 3 channels
     base_model_output = base_model(l1)
 
-    # Calculate upsampling factors dynamically
+    # Dynamically calculate upsampling factors
     target_height, target_width = 128, 32
     base_output_shape = base_model.output_shape[1:3]
     if None in base_output_shape:
         raise ValueError("Base model output shape could not be determined. Ensure input shape is properly defined.")
-    
+
     upsample_height = target_height // base_output_shape[0]
     upsample_width = target_width // base_output_shape[1]
 
+    # Build model
     x = UpSampling2D(size=(upsample_height, upsample_width))(base_model_output)
+    x = Conv2D(64, (3, 3), activation='relu', padding='same')(x)
+    x = BatchNormalization()(x)
+    x = SpatialDropout2D(0.3)(x)  # Add regularization
     out = Conv2D(1, (1, 1), activation='sigmoid')(x)
     model = Model(inp, out)
 
     # Compile model
     model.compile(
-        optimizer=Adam(learning_rate=1e-4),
-        loss='mse',
+        optimizer=Adam(learning_rate=1e-3, clipnorm=1.0),  # Gradient clipping
+        loss='huber',  # Robust loss function
         metrics=['mae']
     )
 
@@ -123,32 +117,29 @@ def train_model(clean_dir, noisy_dir, val_clean_dir, val_noisy_dir, weights_path
         monitor='val_loss',
         save_best_only=True
     )
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)  # Dynamic LR adjustment
     early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
 
-    # Preprocess input for the model
-    x_train = X_in  
-    x_val = val_X_in
-
     # Train the model
-    base_model.trainable = False 
+    base_model.trainable = False  # Freeze base model initially
     history = model.fit(
-        x=x_train,
+        x=X_in,
         y=X_ou,
         validation_data=(val_X_in, val_X_ou),
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[checkpoint, lr_scheduler, early_stopping]
+        callbacks=[checkpoint, reduce_lr, early_stopping]
     )
 
     # Fine-tuning
     base_model.trainable = True
     history = model.fit(
-        x=x_train,
+        x=X_in,
         y=X_ou,
         validation_data=(val_X_in, val_X_ou),
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[checkpoint, lr_scheduler, early_stopping]
+        callbacks=[checkpoint, reduce_lr, early_stopping]
     )
 
     # Save the trained model
@@ -175,5 +166,5 @@ if __name__ == "__main__":
         val_noisy_dir='../data/spectrograms/val/noisy',
         weights_path='../models/weights',
         epochs=50,
-        batch_size=32  
+        batch_size=32
     )
