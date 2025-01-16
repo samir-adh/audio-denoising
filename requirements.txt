@@ -7,3 +7,8 @@ soundfile
 librosa
 tqdm
 pandas
+tensorflow
+keras
+segmentation-models
+sklearn
+streamlit
