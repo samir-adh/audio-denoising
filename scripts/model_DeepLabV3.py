@@ -5,12 +5,16 @@ import numpy as np
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import (Input, Conv2D, SpatialDropout2D, BatchNormalization, 
                                       UpSampling2D, Dropout)
-from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
+from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping, LearningRateScheduler
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.mixed_precision import set_global_policy
 import tensorflow as tf
 from skimage.transform import resize
 import librosa
 import matplotlib.pyplot as plt
+
+# Enable mixed precision for faster training
+set_global_policy('float32')
 
 # Data Augmentation: Time and Frequency Masking (SpecAugment)
 def frequency_masking(spec, freq_width=20):
@@ -34,7 +38,7 @@ def augment_audio(audio, sr, pitch_shift=True, time_stretch=True):
     return audio
 
 # Load and preprocess data
-def load_and_preprocess_data(clean_dir, noisy_dir, resize_shape=(128, 32)):
+def load_and_preprocess_data(clean_dir, noisy_dir, resize_shape=(128, 128)):
     clean_files = sorted(os.listdir(clean_dir))
     noisy_files = sorted(os.listdir(noisy_dir))
 
@@ -70,6 +74,28 @@ def load_and_preprocess_data(clean_dir, noisy_dir, resize_shape=(128, 32)):
 
     return X_in, X_ou
 
+# Efficient data pipeline
+def create_dataset(file_paths, batch_size=32):
+    def load_and_preprocess(file_path):
+        data = np.load(file_path.numpy())
+        data = resize(data, (128, 128), mode='constant', anti_aliasing=True)
+        data = (data - np.mean(data)) / (np.std(data) + 1e-8)
+        return np.expand_dims(data, axis=-1)
+
+    dataset = tf.data.Dataset.from_tensor_slices(file_paths)
+    dataset = dataset.map(lambda x: tf.py_function(load_and_preprocess, [x], [tf.float32]))
+    dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    return dataset
+
+# Learning rate scheduler with warm-up
+def warmup_lr(epoch):
+    if epoch < 5:
+        return 1e-4 + epoch * (1e-3 - 1e-4) / 5
+    else:
+        return 1e-3 * tf.math.exp(-0.1 * (epoch - 5))
+
+lr_scheduler = LearningRateScheduler(warmup_lr)
+
 # Training function
 def train_model(clean_dir, noisy_dir, val_clean_dir, val_noisy_dir, weights_path, epochs, batch_size):
     # Load data
@@ -80,15 +106,15 @@ def train_model(clean_dir, noisy_dir, val_clean_dir, val_noisy_dir, weights_path
     base_model = tf.keras.applications.MobileNetV2(
         include_top=False,
         weights='imagenet',
-        input_shape=(128, 32, 3)
+        input_shape=(128, 128, 3)
     )
 
-    inp = Input(shape=(128, 32, 1))
+    inp = Input(shape=(128, 128, 1))
     l1 = Conv2D(3, (1, 1))(inp)  # Convert single channel to 3 channels
     base_model_output = base_model(l1)
 
     # Dynamically calculate upsampling factors
-    target_height, target_width = 128, 32
+    target_height, target_width = 128, 128
     base_output_shape = base_model.output_shape[1:3]
     if None in base_output_shape:
         raise ValueError("Base model output shape could not be determined. Ensure input shape is properly defined.")
@@ -128,7 +154,7 @@ def train_model(clean_dir, noisy_dir, val_clean_dir, val_noisy_dir, weights_path
         validation_data=(val_X_in, val_X_ou),
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[checkpoint, reduce_lr, early_stopping]
+        callbacks=[checkpoint, reduce_lr, early_stopping, lr_scheduler]
     )
 
     # Fine-tuning
@@ -139,7 +165,7 @@ def train_model(clean_dir, noisy_dir, val_clean_dir, val_noisy_dir, weights_path
         validation_data=(val_X_in, val_X_ou),
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[checkpoint, reduce_lr, early_stopping]
+        callbacks=[checkpoint, reduce_lr, early_stopping, lr_scheduler]
     )
 
     # Save the trained model

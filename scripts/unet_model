@@ -1,0 +1,12 @@
+// U-Net Architecture
+digraph {
+	A [label=Input]
+	B [label="Conv2D Layer"]
+	C [label="ResNet34 Encoder"]
+	D [label="U-Net Decoder"]
+	E [label=Output]
+	A -> B
+	B -> C
+	C -> D
+	D -> E
+}

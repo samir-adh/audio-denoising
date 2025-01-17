@@ -1,0 +1,21 @@
+digraph Model {
+    rankdir=TB;  // Top-to-bottom layout
+    node [shape=box, fontname="Arial", fontsize=10];
+
+    // Input Layer
+    Input [label="Input\n(128, 32, 1)", shape=ellipse, color=blue];
+
+    // Conv2D Layer
+    Conv2D [label="Conv2D\n(3 filters, 1x1)", shape=box, color=green];
+
+    // U-Net Backbone
+    UNet [label="U-Net (ResNet34 Backbone)", shape=box, color=orange];
+
+    // Output Layer
+    Output [label="Output\n(128, 32, 1)", shape=ellipse, color=red];
+
+    // Connections
+    Input -> Conv2D;
+    Conv2D -> UNet;
+    UNet -> Output;
+}
